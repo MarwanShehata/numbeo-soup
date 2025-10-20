@@ -1,4 +1,4 @@
-""" This script uses BeautifulSoup to parse through Numbeo pages and get a specific data point. """
+""" This script uses BeautifulSoup to parse through Numbeo pages and extract all cost-of-living data including price ranges. """
 
 import re
 import time
@@ -16,25 +16,22 @@ headers = {
     'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:52.0) Gecko/20100101 Firefox/52.0'
     }
 
-# This specifies the string we're looking for in the table on each Numbeo page
-# We can change this when we're looking for other data points from Numbeo
-
-STRING_TO_MATCH = "Cappuccino "
-
 # city-list.txt contains a list of cities we want to investigate
-# Numbeo's URL format uses the city name directly, but sometimes uses weird formatting
 
 city_file = open("city-list.txt", "r")
 content = city_file.read()
 city_list = content.split("\n")
 city_file.close()
-city_cap_value = {"City":STRING_TO_MATCH}
+
+# This list will store all extracted data
+all_data = []
 
 for city in city_list:
 
     # Handling data quirks and formatting URL
     if len(city) == 0:
         continue
+    
     clean_city = city.replace(" ","-")
     url = "https://www.numbeo.com/cost-of-living/in/" + clean_city
 
@@ -42,22 +39,54 @@ for city in city_list:
     req = requests.get(url, headers)
     soup = BeautifulSoup(req.content, 'html.parser')
 
-    # Find the cell with our string in it, back out to the full row, then zoom in on the cost cell
-    cap_cell = soup.body.findAll("td",string=re.compile(STRING_TO_MATCH))
-    cap_row = cap_cell[0].parent
-    children = cap_row.findChildren()
-    cap_item = children[1].findChildren()
-    cap_value = cap_item[0].text
-    cap_value = cap_value[:-2]
+    # Parse all rows from the data table
+    all_rows = soup.body.findAll("tr")
 
-    # print the results to stdout, then store in the city_cap_value dict
-    print(city.strip() + ",$" + cap_value.strip())
-    city_cap_value[city] = "$" + cap_value
+    # Extract data from each row
+    for row in all_rows:
+        cells = row.findAll("td")
+        
+        # Skip header rows and rows with fewer than 3 cells
+        if len(cells) < 3:
+            continue
+        
+        # Get item name (first cell) and price (second cell)
+        item_name = cells[0].text.strip()
+        price_cell = cells[1].findAll("span", class_="first_currency")
+        
+        if price_cell:
+            price_value = price_cell[0].text.strip()
+            
+            # Extract range data from the third cell
+            range_cell = cells[2]
+            range_texts = range_cell.findAll("span", class_="barTextLeft")
+            range_min = ""
+            range_max = ""
+            
+            if len(range_texts) >= 1:
+                range_min = range_texts[0].text.strip()
+            
+            range_texts_right = range_cell.findAll("span", class_="barTextRight")
+            if len(range_texts_right) >= 1:
+                range_max = range_texts_right[0].text.strip()
+            
+            print(f"{city.strip()},{item_name},{price_value},{range_min},{range_max}")
+            
+            all_data.append({
+                'city': city.strip(),
+                'item': item_name,
+                'price': price_value,
+                'range_min': range_min,
+                'range_max': range_max
+            })
 
     # This is here to keep the Numbeo server happy - it doesn't like too many requests
     time.sleep(random.randint(1,9))
 
-# Write the results to output.txt and we're done!
+# Write the results to output.csv
 with open("output.csv", 'w') as f:
-    for key, value in city_cap_value.items():
-        f.write('%s,%s\n' % (key, value))
+    f.write("City,Item,Price,Range Min,Range Max\n")  # Header
+    for entry in all_data:
+        f.write('%s,%s,%s,%s,%s\n' % (entry['city'], entry['item'], entry['price'], entry['range_min'], entry['range_max']))
+
+print("Data extraction complete! Results written to output.csv")
